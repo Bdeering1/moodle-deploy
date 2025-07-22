@@ -64,7 +64,7 @@ fi
 if [ ! -f $MDL_DIR/config.php ]; then
     echo -e "$HR\n Running Moodle installer...\n$HR"
     sudo chown -R www-data:www-data $MDL_DIR
-    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://localhost --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
+    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://moodle.local --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
     sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 else
     echo "Moodle configuration file exists. Skipping..."
