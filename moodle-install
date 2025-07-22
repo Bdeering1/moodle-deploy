@@ -10,7 +10,7 @@ continue_prompt() {
     esac
 }
 
-HR=----------------------------------------
+HR=--------------------------------------------------------------------------------
 
 # Set environment variables
 export MDL_DIR=~/moodle \
@@ -18,47 +18,53 @@ export MDL_DIR=~/moodle \
        PG_USER=moodleuser \
        PG_PASS=m@0dlEr
 
+# Set locale info (prevents verbose locale warnings)
+echo "LC_ALL=en_US.UTF-8" | sudo tee -a /etc/environment
+echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
+echo "LANG=en_US.UTF-8" | sudo tee -a /etc/locale.conf
+sudo locale-gen en_US.UTF-8
+
 # Install Dependencies
-echo "$HR Installing dependencies...$HR"
-sudo apt update && sudo apt upgrade-y && sudo apt install -y vim apache2 postgresql git php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
+echo -e "$HR\n Installing dependencies...$HR"
+sudo apt update && sudo apt upgrade -y && sudo apt install -y vim apache2 postgresql git php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 # double check these php modules: json, pcre, xmlrpc
 
-echo HR
-continue_prompt()
+echo $HR
+continue_prompt
 
 # Install Moodle
-echo "$HR Cloning Moodle repository...$HR"
+echo -e "$HR\n Cloning Moodle repository...\n$HR"
 git clone --depth 1 -b MOODLE_500_STABLE git://git.moodle.org/moodle.git $MDL_DIR
 
-echo HR
-continue_prompt()
+printf $HR
+continue_prompt
 
 # Create database
-echo "$HR Creating Postgres database...$HR"
+echo -e "$HR\n Creating Postgres database...\n$HR"
 sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
 
-echo HR
-continue_prompt()
+printf $HR
+continue_prompt
 
 # Create moodledata directory
-echo "$HR Creating Moodle data directory...$HR"
+echo -e "$HR\n Creating Moodle data directory...\n$HR"
 mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
 
 # Start Moodle install
-echo "$HR Creating Moodle data directory...$HR"
+echo -e "$HR\n Creating Moodle data directory...\n$HR"
 sudo chown -R www-data:www-data $MDL_DIR
 sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://localhost --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
 sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 
-echo HR
-continue_prompt()
+printf $HR
+continue_prompt
 
 # Apache Modules
-echo "$HR Enabling Apache modules...$HR"
+echo -e "$HR\n Enabling Apache modules...\n$HR"
 sudo a2enmod rewrite headers expires rewrite
 
 # Apache PHP Config
-echo "$HR Copying Apache configuration files...$HR"
+echo -e "$HR\n Copying Apache configuration files...\n$HR"
 mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
 sudo mkdir /etc/php/8.2/apache2/conf.d && sudo cp moodle.ini /etc/php/8.2/apache2/conf.d/moodle.ini
 
@@ -66,6 +72,6 @@ sudo mkdir /etc/php/8.2/apache2/conf.d && sudo cp moodle.ini /etc/php/8.2/apache
 sudo cp moodle.conf etc/apache2/sites-available/moodle.conf
 
 # Enable Moodle site
-echo "$HR Enabling site...$HR"
+echo -e "$HR\n Enabling site...\n$HR"
 sudo a2ensite moodle.conf # enable moodle site
 sudo a2dissite 000-default.conf # disable Apache welcome page
