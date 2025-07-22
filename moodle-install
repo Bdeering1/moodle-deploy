@@ -12,8 +12,15 @@ usage() {
 
 # prompt the user and store the result in a provided environment variable
 get_input() {
-    read -p "$1" user_input
-    printf -v "$2" "%s" "$user_input"
+    local prompt=$1
+    local env_var=$2
+
+    read -p "$prompt" user_input
+    if [ -n "$user_input" ]; then
+        printf -v "$env_var" "%s" "$user_input"
+    else
+        echo ${!env_var}
+    fi
 }
 
 continue_prompt() {
@@ -32,7 +39,7 @@ MDL_DIR=~/moodle \
 MDL_DATA=/var/www/moodle_data \
 PG_USER=moodleuser \
 PG_PASS=m@0dlEr
-WEB_ROOT=moodle.local
+WEB_ROOT=http://moodle.local
 ADMIN_USER=admin
 ADMIN_PASS=pass
 
@@ -59,9 +66,9 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Get important values from user
-get_input "Enter site url (default: $WEB_ROOT): " WEB_ROOT
-get_input "Enter admin name (default: $ADMIN_USER): " ADMIN_USER
-get_input "Enter admin password (default: $ADMIN_PASS): " ADMIN_USER
+get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
+get_input "Enter admin name [default: $ADMIN_USER]: " ADMIN_USER
+get_input "Enter admin password [default: $ADMIN_PASS]: " ADMIN_PASS
 
 # Set locale info (prevents verbose locale warnings)
 if ! cat /etc/locale.gen | tail | grep -w en_CA; then
@@ -99,7 +106,6 @@ fi
 
 # Create moodledata directory
 if [ ! -d "$MDL_DATA" ]; then
-    echo -e "$HR\n Creating Moodle data directory...\n$HR"
     sudo mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
 else
     echo "Moodle data directory exists. Skipping..."
@@ -115,7 +121,7 @@ else
     echo "Moodle configuration file exists. Skipping..."
 fi
 
-echo -e "$HR\nDone creating database and installing core components."
+echo -e "$HR\nDone creating database.\nDone installing core components."
 continue_prompt
 
 # Apache Modules
@@ -136,4 +142,4 @@ echo -e "$HR\n Enabling site...\n$HR"
 sudo a2dissite 000-default.conf # disable Apache welcome page
 sudo a2ensite moodle.conf # enable moodle site
 sudo systemctl reload apache2
-sudo systemctl status apache2
+sudo systemctl status apache2 --no-pager --lines=0
