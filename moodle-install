@@ -1,7 +1,7 @@
 #!/bin/bash
 
 continue_prompt() {
-    read -t 20 -p "Do you want to continue? (y/N) [default: y] " yn
+    read -t 15 -p "Do you want to continue? (y/n) [default: y] " yn
     yn=${yn:-$default} # use default if no input
 
     case "$yn" in
@@ -14,15 +14,15 @@ HR=-----------------------------------------------------------------------------
 
 # Set environment variables
 export MDL_DIR=~/moodle \
-       MDL_DATA=~/var/www/moodle_data \
+       MDL_DATA=/var/www/moodle_data \
        PG_USER=moodleuser \
        PG_PASS=m@0dlEr
 
 # Set locale info (prevents verbose locale warnings)
-echo "LC_ALL=en_US.UTF-8" | sudo tee -a /etc/environment
-echo "en_US.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
-echo "LANG=en_US.UTF-8" | sudo tee -a /etc/locale.conf
-sudo locale-gen en_US.UTF-8
+echo "LC_ALL=en_CA.UTF-8" | sudo tee -a /etc/environment
+echo "en_CA.UTF-8 UTF-8" | sudo tee -a /etc/locale.gen
+echo "LANG=en_CA.UTF-8" | sudo tee -a /etc/locale.conf
+sudo locale-gen en_CA.UTF-8
 
 # Install Dependencies
 echo -e "$HR\n Installing dependencies...$HR"
@@ -36,27 +36,21 @@ continue_prompt
 echo -e "$HR\n Cloning Moodle repository...\n$HR"
 git clone --depth 1 -b MOODLE_500_STABLE git://git.moodle.org/moodle.git $MDL_DIR
 
-printf $HR
-continue_prompt
-
 # Create database
 echo -e "$HR\n Creating Postgres database...\n$HR"
 sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
 
-printf $HR
-continue_prompt
-
 # Create moodledata directory
 echo -e "$HR\n Creating Moodle data directory...\n$HR"
-mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
+sudo mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
 
 # Start Moodle install
-echo -e "$HR\n Creating Moodle data directory...\n$HR"
+echo -e "$HR\n Running Moodle installer...\n$HR"
 sudo chown -R www-data:www-data $MDL_DIR
 sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://localhost --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
 sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 
-printf $HR
+echo $HR
 continue_prompt
 
 # Apache Modules
