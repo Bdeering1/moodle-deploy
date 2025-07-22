@@ -2,7 +2,7 @@
 
 continue_prompt() {
     read -t 15 -p "Do you want to continue? (y/n) [default: y] " yn
-    yn=${yn:-$default} # use default if no input
+    yn=${yn:-y}
 
     case "$yn" in
         [Yy] ) echo "Continuing...";;
@@ -25,32 +25,48 @@ echo "LANG=en_CA.UTF-8" | sudo tee -a /etc/locale.conf
 sudo locale-gen en_CA.UTF-8
 
 # Install Dependencies
-echo -e "$HR\n Installing dependencies...$HR"
+echo -e "$HR\n Installing dependencies...\n$HR"
 sudo apt update && sudo apt upgrade -y && sudo apt install -y vim apache2 postgresql git php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 # double check these php modules: json, pcre, xmlrpc
 
-echo $HR
+echo -e "$HR\nDone installing dependencies."
 continue_prompt
 
-# Install Moodle
-echo -e "$HR\n Cloning Moodle repository...\n$HR"
-git clone --depth 1 -b MOODLE_500_STABLE git://git.moodle.org/moodle.git $MDL_DIR
+# Clone Moodle repository
+if [ ! -d "$MDL_DIR" ]; then
+    echo -e "$HR\n Cloning Moodle repository...\n$HR"
+    git clone --depth 1 -b MOODLE_500_STABLE git://git.moodle.org/moodle.git $MDL_DIR
+else
+    echo "Moodle directory exists. Skipping..."
+fi
 
 # Create database
-echo -e "$HR\n Creating Postgres database...\n$HR"
-sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
+if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw moodle; then
+    echo -e "$HR\n Creating Postgres database and Moodle data directory...\n$HR"
+    sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
+else
+    echo "Moodle database exists. Skipping..."
+fi
 
 # Create moodledata directory
-echo -e "$HR\n Creating Moodle data directory...\n$HR"
-sudo mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
+if [ ! -d "$MDL_DATA" ]; then
+    echo -e "$HR\n Creating Moodle data directory...\n$HR"
+    sudo mkdir $MDL_DATA && sudo chown -R www-data:www-data $MDL_DATA && sudo chmod 0755 $MDL_DATA
+else
+    echo "Moodle data directory exists. Skipping..."
+fi
 
 # Start Moodle install
-echo -e "$HR\n Running Moodle installer...\n$HR"
-sudo chown -R www-data:www-data $MDL_DIR
-sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://localhost --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
-sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
+if [ ! -f $MDL_DIR/config.php ]; then
+    echo -e "$HR\n Running Moodle installer...\n$HR"
+    sudo chown -R www-data:www-data $MDL_DIR
+    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=http://localhost --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminpass=12345 --non-interactive
+    sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
+else
+    echo "Moodle configuration file exists. Skipping..."
+fi
 
-echo $HR
+echo -e "$HR\nDone creating database and installing core components."
 continue_prompt
 
 # Apache Modules
@@ -59,11 +75,12 @@ sudo a2enmod rewrite headers expires rewrite
 
 # Apache PHP Config
 echo -e "$HR\n Copying Apache configuration files...\n$HR"
-mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
-sudo mkdir /etc/php/8.2/apache2/conf.d && sudo cp moodle.ini /etc/php/8.2/apache2/conf.d/moodle.ini
+sudo mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
+sudo mkdir /etc/php/8.2/apache2/conf.d
+sudo cp moodle-config/moodle.ini /etc/php/8.2/apache2/conf.d/moodle.ini
 
 # Apache Virtual Host Config
-sudo cp moodle.conf etc/apache2/sites-available/moodle.conf
+sudo cp moodle-config/moodle.conf /etc/apache2/sites-available/moodle.conf
 
 # Enable Moodle site
 echo -e "$HR\n Enabling site...\n$HR"
