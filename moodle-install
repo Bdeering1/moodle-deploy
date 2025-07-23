@@ -10,7 +10,7 @@ usage() {
     exit 1
 }
 
-# prompt the user and store the result in a provided environment variable
+# Prompt user and store result in a provided environment variable
 get_input() {
     local prompt=$1
     local env_var=$2
@@ -43,6 +43,10 @@ WEB_ROOT=http://moodle.local
 ADMIN_USER=admin
 ADMIN_PASS=pass
 
+DB_BACKUP_DIR=/var/backups/postgresql
+DB_BACKUP_SCRIPT=/usr/local/bin/db_backup
+DB_BACKUP_LOG=/var/log/db_backup.log
+
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
@@ -62,7 +66,7 @@ while [[ "$#" -gt 0 ]]; do
             usage
             ;;
     esac
-    shift # Shift past the argument name (e.g., -n or --name)
+    shift
 done
 
 # Get important values from user
@@ -82,8 +86,14 @@ fi
 
 # Install Dependencies
 echo -e "$HR\n Installing dependencies...\n$HR"
-sudo apt update && sudo apt upgrade -y && sudo apt install -y vim apache2 postgresql git php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
-# double check these php modules: json, pcre, xmlrpc
+sudo apt update && sudo apt upgrade -y
+
+sudo apt install gpg curl ca-certificates -y
+curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg # get postgres gpg key
+sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' # add PostgreSQL apt repository
+
+sudo apt update -y
+sudo apt install -y apache2 postgresql-17 git ufw fail2ban php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 
 echo -e "$HR\nDone installing dependencies."
 continue_prompt
@@ -102,6 +112,38 @@ if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw moodle; then
     sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
 else
     echo "Moodle database exists. Skipping..."
+fi
+
+# Regular database backups
+if ! sudo -u postgres crontab -l 2>/dev/null | grep -q ".*$DB_BACKUP_SCRIPT.*"; then
+    echo -e "$HR\n Setting up regular database backups...\n$HR"
+    sudo mkdir -p $DB_BACKUP_DIR
+    sudo chown postgres:postgres $DB_BACKUP_DIR
+    sudo chmod 700 $DB_BACKUP_DIR
+    sudo cat << EOF > "$DB_BACKUP_SCRIPT"
+#!/bin/bash
+
+RETENTION_DAYS=7
+TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+BACKUP_FILE="$DB_BACKUP_DIR/moodle_${TIMESTAMP}.sql.gz"
+
+echo "Starting PostgreSQL backup for database: moodle..."
+if pg_dump --format=c --file="${BACKUP_FILE}" "moodle"; then
+    echo "Backup successful: ${BACKUP_FILE}"
+    
+    echo "Deleting backups older than ${RETENTION_DAYS} days..."
+    find "$DB_BACKUP_DIR" -type f -name "moodle_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
+    echo "Old backups cleaned up."
+else
+    echo "Backup FAILED for database: moodle"
+    exit 1
+fi
+EOF
+    sudo chmod +x $DB_BACKUP_SCRIPT
+    sudo touch /var/log/db_backup.log && sudo chown postgres:postgres $DB_BACKUP_LOG && sudo chmod 640 $DB_BACKUP_LOG
+    sudo -u postgres sh -c "echo '0 0 * * 0 $DB_BACKUP_SCRIPT > $DB_BACKUP_LOG 2>&1' | crontab -"
+else
+    echo "Database backup tasks exists. Skipping..."
 fi
 
 # Create moodledata directory
@@ -143,3 +185,66 @@ sudo a2dissite 000-default.conf # disable Apache welcome page
 sudo a2ensite moodle.conf # enable moodle site
 sudo systemctl reload apache2
 sudo systemctl status apache2 --no-pager --lines=0
+
+echo -e "$HR\n Done with Apache configuration."
+continue_prompt
+
+# Set up cron service (needs an if statement to verify this hasn't been set yet)
+if ! sudo -u www-data crontab -l 2>/dev/null | grep -q ".*$MDL_DIR/admin/cli/cron.php.*"; then
+    echo -e "$HR\n Setting up Moodle cron service...\n$HR"
+    sudo -u www-data sh -c "echo '* * * * * /usr/bin/php $MDL_DIR/admin/cli/cron.php >/dev/null' | crontab -"
+    sudo -u www-data crontab -l
+else
+    echo "Moodle cron service exists. Skipping..."
+fi
+
+# Set up swapfile
+if [ ! -f "/swapfile" ]; then
+    echo -e "$HR\n Creating swapfile...\n$HR"
+    sudo fallocate -l "$(free -b | awk '/Mem:/ {print $2}')" /swapfile
+    sudo chmod 600 /swapfile
+    sudo mkswap /swapfile
+    sudo swapon /swapfile
+    sudo sh -c "echo '/swapfile none swap sw 0 0' >> /etc/fstab"
+    sudo sh -c "echo 'vm.swappiness=20' >> /"
+    free -h
+else
+    echo "Swapfile exists. Skipping..."
+fi
+
+# Setup UFW
+echo -e "$HR\n Setting up firewall...\n$HR"
+sudo ufw allow ssh
+sudo ufw allow http
+sudo ufw allow https
+sudo ufw enable
+sudo ufw status verbose
+
+# Setup Fail2Ban
+JAIL_CONFIG="/etc/fail2ban/jail.local"
+if [ ! -f $JAIL_CONFIG ]; then
+    echo -e "$HR\n Setting up fail2ban (Brute-force protection)...\n$HR"
+    sudo cat << EOF > "$JAIL_CONFIG"
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 192.168.16.0/24 192.168.1.0/24 $(curl ifconfig.me)
+
+[sshd]
+enabled = true
+
+[apache-auth]
+enabled = true
+
+[apache-badbots]
+enabled = true
+
+[apache-noscript]
+enabled = true
+
+[apache-overflows]
+enabled = true
+EOF
+    sudo systemctl restart fail2ban
+    sudo systemctl status fail2ban --no-pager --lines=0
+else
+    echo "Fail2ban configuration exists. Skipping..."
+fi
