@@ -70,9 +70,11 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 # Get important values from user
-get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
-get_input "Enter admin name [default: $ADMIN_USER]: " ADMIN_USER
-get_input "Enter admin password [default: $ADMIN_PASS]: " ADMIN_PASS
+if [ ! -f $MDL_DIR/config.php ]; then
+    get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
+    get_input "Enter admin name [default: $ADMIN_USER]: " ADMIN_USER
+    get_input "Enter admin password [default: $ADMIN_PASS]: " ADMIN_PASS
+fi
 
 # Set locale info (prevents verbose locale warnings)
 if ! cat /etc/locale.gen | tail | grep -w en_CA; then
@@ -88,11 +90,13 @@ fi
 echo -e "$HR\n Installing dependencies...\n$HR"
 sudo apt update && sudo apt upgrade -y
 
-sudo apt install gpg curl ca-certificates -y
-curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg # get postgres gpg key
-sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' # add PostgreSQL apt repository
+if [ ! -f "/etc/apt/sources.list.d/pgdg.list" ]; then
+    sudo apt install gpg curl ca-certificates -y
+    curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg # get postgres gpg key
+    sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list' # add PostgreSQL apt repository
+    sudo apt update -y
+fi
 
-sudo apt update -y
 sudo apt install -y apache2 postgresql-17 git ufw fail2ban php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 
 echo -e "$HR\nDone installing dependencies."
@@ -120,19 +124,19 @@ if ! sudo -u postgres crontab -l 2>/dev/null | grep -q ".*$DB_BACKUP_SCRIPT.*"; 
     sudo mkdir -p $DB_BACKUP_DIR
     sudo chown postgres:postgres $DB_BACKUP_DIR
     sudo chmod 700 $DB_BACKUP_DIR
-    sudo cat << EOF > "$DB_BACKUP_SCRIPT"
+    sudo tee "$DB_BACKUP_SCRIPT" << EOF
 #!/bin/bash
 
 RETENTION_DAYS=7
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-BACKUP_FILE="$DB_BACKUP_DIR/moodle_${TIMESTAMP}.sql.gz"
+TIMESTAMP=\$(date +"%Y%m%d_%H%M%S")
+BACKUP_FILE="$DB_BACKUP_DIR/moodle_\$TIMESTAMP.sql.gz"
 
 echo "Starting PostgreSQL backup for database: moodle..."
-if pg_dump --format=c --file="${BACKUP_FILE}" "moodle"; then
-    echo "Backup successful: ${BACKUP_FILE}"
+if pg_dump --format=c --file="\$BACKUP_FILE" "moodle"; then
+    echo "Backup successful: \$BACKUP_FILE"
     
-    echo "Deleting backups older than ${RETENTION_DAYS} days..."
-    find "$DB_BACKUP_DIR" -type f -name "moodle_*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete
+    echo "Deleting backups older than \$RETENTION_DAYS days..."
+    find "$DB_BACKUP_DIR" -type f -name "moodle_*.sql.gz" -mtime +"\$RETENTION_DAYS" -delete
     echo "Old backups cleaned up."
 else
     echo "Backup FAILED for database: moodle"
@@ -140,8 +144,9 @@ else
 fi
 EOF
     sudo chmod +x $DB_BACKUP_SCRIPT
-    sudo touch /var/log/db_backup.log && sudo chown postgres:postgres $DB_BACKUP_LOG && sudo chmod 640 $DB_BACKUP_LOG
+    sudo touch $DB_BACKUP_LOG && sudo chown postgres:postgres $DB_BACKUP_LOG && sudo chmod 640 $DB_BACKUP_LOG
     sudo -u postgres sh -c "echo '0 0 * * 0 $DB_BACKUP_SCRIPT > $DB_BACKUP_LOG 2>&1' | crontab -"
+    sudo -u postgres crontab -l
 else
     echo "Database backup tasks exists. Skipping..."
 fi
@@ -189,7 +194,7 @@ sudo systemctl status apache2 --no-pager --lines=0
 echo -e "$HR\n Done with Apache configuration."
 continue_prompt
 
-# Set up cron service (needs an if statement to verify this hasn't been set yet)
+# Set up cron service
 if ! sudo -u www-data crontab -l 2>/dev/null | grep -q ".*$MDL_DIR/admin/cli/cron.php.*"; then
     echo -e "$HR\n Setting up Moodle cron service...\n$HR"
     sudo -u www-data sh -c "echo '* * * * * /usr/bin/php $MDL_DIR/admin/cli/cron.php >/dev/null' | crontab -"
@@ -222,9 +227,9 @@ sudo ufw status verbose
 
 # Setup Fail2Ban
 JAIL_CONFIG="/etc/fail2ban/jail.local"
-if [ ! -f $JAIL_CONFIG ]; then
+if [ ! -f "$JAIL_CONFIG" ]; then
     echo -e "$HR\n Setting up fail2ban (Brute-force protection)...\n$HR"
-    sudo cat << EOF > "$JAIL_CONFIG"
+    sudo tee "$JAIL_CONFIG" << EOF
 [DEFAULT]
 ignoreip = 127.0.0.1/8 ::1 192.168.16.0/24 192.168.1.0/24 $(curl ifconfig.me)
 
