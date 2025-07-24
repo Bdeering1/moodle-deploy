@@ -19,12 +19,12 @@ get_input() {
     if [ -n "$user_input" ]; then
         printf -v "$env_var" "%s" "$user_input"
     else
-        echo ${!env_var}
+        echo "Using default: ${!env_var}"
     fi
 }
 
 continue_prompt() {
-    read -t 15 -p "Do you want to continue? (y/n) [default: y] " yn
+    read -t 20 -p "Do you want to continue? (y/n) [default: y] " yn
     yn=${yn:-y}
 
     case "$yn" in
@@ -36,14 +36,14 @@ continue_prompt() {
 normalize_url() {
     local normalized
     normalized=$(echo "$1" | sed -E 's/^(http|https):\/\///')
-    normalized=$(echo "$normalized_url" | sed -E 's/^www\.//')
-    normalized=$(echo "$normalized_url" | sed -E 's/\/$//')
-    printf -v "$1" "%s" "$normalized"
+    normalized=$(echo "$normalized" | sed -E 's/^www\.//')
+    normalized=$(echo "$normalized" | sed -E 's/\/$//')
+    echo "$normalized"
 }
 
 # Set environment variables
 DB_USER=moodleuser
-DB_PASSS=m@0dlEr
+DB_PASS=m@0dlEr
 WEB_ROOT=moodle.local
 ADMIN_USER=admin
 ADMIN_PASS=pass
@@ -65,7 +65,7 @@ while [[ "$#" -gt 0 ]]; do
             shift
             ;;
         --db-pass)
-            DB_PASSS="$2"
+            DB_PASS="$2"
             shift
             ;;
         -h|--help )
@@ -83,8 +83,8 @@ done
 if [ ! -f $MDL_DIR/config.php ]; then
     while true; do
         get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
-        if echo $WEB_ROOT | grep -Pp '^((http|https)://)?(www\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/?)$'; then
-            normalize_url WEB_ROOT
+        if echo $WEB_ROOT | grep -Pq '^((http|https)://)?(www\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/?)$'; then
+            WEB_ROOT=$(normalize_url $WEB_ROOT)
             break
         else
             echo "Error: '$WEB_ROOT' is not a valid root URL."
@@ -133,7 +133,8 @@ fi
 # Create database
 if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw moodle; then
     echo -e "$HR\n Creating Postgres database and Moodle data directory...\n$HR"
-    sudo -u postgres psql -U postgres -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
+    sudo -u postgres psql -U postgres -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS'"
+    sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $DB_USER"
 else
     echo "Moodle database exists. Skipping..."
 fi
@@ -182,13 +183,13 @@ fi
 if [ ! -f $MDL_DIR/config.php ]; then
     echo -e "$HR\n Running Moodle installer...\n$HR"
     sudo chown -R www-data:www-data $MDL_DIR
-    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot="http://$WEB_ROOT" --dataroot=$MDL_DATA --dbtype=pgsql --dbuser="$DB_USER" --dbpass="$DB_PASSS" --dbport=5432 --fullname=$SITE_NAME --shortname=$SHORT_NAME --adminuser="$ADMIN_USER" --adminpass="$ADMIN_PASS" --non-interactive
+    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot="http://$WEB_ROOT" --dataroot=$MDL_DATA --dbtype=pgsql --dbuser="$DB_USER" --dbpass="$DB_PASS" --dbport=5432 --fullname="$SITE_NAME" --shortname="$SHORT_NAME" --adminuser="$ADMIN_USER" --adminpass="$ADMIN_PASS" --non-interactive
     sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 else
     echo "Moodle configuration file exists. Skipping..."
 fi
 
-echo -e "$HR\nDone creating database.\nDone installing core components."
+echo -e "$HR\nDone creating database and installing core components."
 continue_prompt
 
 # Apache Modules
