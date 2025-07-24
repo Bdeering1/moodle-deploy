@@ -33,29 +33,39 @@ continue_prompt() {
     esac
 }
 
+normalize_url() {
+    local normalized
+    normalized=$(echo "$1" | sed -E 's/^(http|https):\/\///')
+    normalized=$(echo "$normalized_url" | sed -E 's/^www\.//')
+    normalized=$(echo "$normalized_url" | sed -E 's/\/$//')
+    printf -v "$1" "%s" "$normalized"
+}
+
 # Set environment variables
-HR=--------------------------------------------------------------------------------
-MDL_DIR=~/moodle \
-MDL_DATA=/var/www/moodle_data \
-PG_USER=moodleuser \
-PG_PASS=m@0dlEr
-WEB_ROOT=http://moodle.local
+DB_USER=moodleuser
+DB_PASSS=m@0dlEr
+WEB_ROOT=moodle.local
 ADMIN_USER=admin
 ADMIN_PASS=pass
+SITE_NAME="Moodle Site"
+SHORT_NAME="Moodle"
 
+MDL_DIR=~/moodle
+MDL_DATA=/var/www/moodle_data
 DB_BACKUP_DIR=/var/backups/postgresql
 DB_BACKUP_SCRIPT=/usr/local/bin/db_backup
 DB_BACKUP_LOG=/var/log/db_backup.log
+HR=--------------------------------------------------------------------------------
 
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --db-user )
-            PG_USER="$2"
+            DB_USER="$2"
             shift
             ;;
         --db-pass)
-            PG_PASS="$2"
+            DB_PASSS="$2"
             shift
             ;;
         -h|--help )
@@ -71,7 +81,17 @@ done
 
 # Get important values from user
 if [ ! -f $MDL_DIR/config.php ]; then
-    get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
+    while true; do
+        get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
+        if echo $WEB_ROOT | grep -Pp '^((http|https)://)?(www\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/?)$'; then
+            normalize_url WEB_ROOT
+            break
+        else
+            echo "Error: '$WEB_ROOT' is not a valid root URL."
+        fi
+    done
+    get_input "Enter full site name [default: $SITE_NAME]: " SITE_NAME
+    get_input "Enter short site name (1-2 words) [default: $SHORT_NAME]: " SHORT_NAME
     get_input "Enter admin name [default: $ADMIN_USER]: " ADMIN_USER
     get_input "Enter admin password [default: $ADMIN_PASS]: " ADMIN_PASS
 fi
@@ -113,7 +133,7 @@ fi
 # Create database
 if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw moodle; then
     echo -e "$HR\n Creating Postgres database and Moodle data directory...\n$HR"
-    sudo -u postgres psql -U postgres -c "CREATE USER $PG_USER WITH PASSWORD '$PG_PASS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
+    sudo -u postgres psql -U postgres -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASSS'" && sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $PG_USER"
 else
     echo "Moodle database exists. Skipping..."
 fi
@@ -162,7 +182,7 @@ fi
 if [ ! -f $MDL_DIR/config.php ]; then
     echo -e "$HR\n Running Moodle installer...\n$HR"
     sudo chown -R www-data:www-data $MDL_DIR
-    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot=$WEB_ROOT --dataroot=$MDL_DATA --dbtype=pgsql --dbuser=$PG_USER --dbpass=$PG_PASS --dbport=5432 --fullname="Rexdale Alliance Church" --shortname="Safe Church" --adminuser=$ADMIN_USER --adminpass=$ADMIN_PASS --non-interactive
+    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot="http://$WEB_ROOT" --dataroot=$MDL_DATA --dbtype=pgsql --dbuser="$DB_USER" --dbpass="$DB_PASSS" --dbport=5432 --fullname=$SITE_NAME --shortname=$SHORT_NAME --adminuser="$ADMIN_USER" --adminpass="$ADMIN_PASS" --non-interactive
     sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 else
     echo "Moodle configuration file exists. Skipping..."
@@ -179,10 +199,60 @@ sudo a2enmod rewrite headers expires rewrite
 echo -e "$HR\n Copying Apache configuration files...\n$HR"
 sudo mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
 sudo mkdir /etc/php/8.2/apache2/conf.d
-sudo cp moodle-config/moodle.ini /etc/php/8.2/apache2/conf.d/moodle.ini
+sudo tee "/etc/php/8.2/apache2/conf.d/moodle.ini" << EOF
+; Moodle-specific PHP settings
+memory_limit = 512M
+max_execution_time = 300
+upload_max_filesize = 512M
+post_max_size = 512M
+max_input_vars = 5000
+
+; Error Reporting
+display_errors = Off
+log_errors = On
+error_log = /var/log/php/php_errors.log
+
+; Session Management
+session.save_handler = files
+session.save_path = /var/lib/php/sessions
+session.auto_start = Off
+
+; File Uploads
+file_uploads = On
+
+; OPcache
+opcache.enable = 1
+opcache.memory_consumption = 256
+opcache.max_accelerated_files = 4000
+opcache.validate_timestamps = 0
+EOF
 
 # Apache Virtual Host Config
-sudo cp moodle-config/moodle.conf /etc/apache2/sites-available/moodle.conf
+sudo tee "/etc/apache2/sites-available/moodle.conf" << EOF
+<VirtualHost *:80>
+    ServerAdmin webmaster@localhost
+    ServerName $WEB_ROOT
+    ServerAlias www.$WEB_ROOT
+
+    DocumentRoot $MDL_DIR
+
+    <Directory $MDL_DIR>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    <Directory $MDL_DATA>
+        Require all denied
+    </Directory>
+
+    ErrorLog \${APACHE_LOG_DIR}/moodle_error.log
+    CustomLog \${APACHE_LOG_DIR}/moodle_access.log combined
+</VirtualHost>
+
+# Suppress Apache's AH00558 warning
+ServerName localhost
+EOF
 
 # Enable Moodle site
 echo -e "$HR\n Enabling site...\n$HR"
