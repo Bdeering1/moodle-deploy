@@ -14,11 +14,18 @@ usage() {
 get_input() {
     local prompt=$1
     local env_var=$2
+    local default="$2_DEF"
+
+    if [ -n "${!env_var}" ]; then
+        echo "$env_var: set using cli flag"
+        return 0
+    fi
 
     read -p "$prompt" user_input
     if [ -n "$user_input" ]; then
         printf -v "$env_var" "%s" "$user_input"
     else
+        printf -v "$env_var" "%s" "${!default}"
         echo "Using default: ${!env_var}"
     fi
 }
@@ -41,14 +48,24 @@ normalize_url() {
     echo "$normalized"
 }
 
+echo_clr() {
+    echo -e "\e[38;5;$2m$1\e[0m"
+}
+echo_pink() { echo_clr $1 204; }
+echo_blue() { echo_clr $1 69; }
+echo_purple() { echo_clr $1 135; }
+echo_orange() { echo_clr $1 209; }
+echo_green() { echo_clr $1 48; }
+
 # Set environment variables
-DB_USER=moodleuser
-DB_PASS=m@0dlEr
-WEB_ROOT=moodle.local
-ADMIN_USER=admin
-ADMIN_PASS=pass
-SITE_NAME="Moodle Site"
-SHORT_NAME="Moodle"
+DB_USER_DEF=moodleuser
+DB_PASS_DEF=m@0dlEr
+WEB_ROOT_DEF=moodle.local
+ADMIN_USER_DEF=admin
+ADMIN_PASS_DEF=pass
+SITE_NAME_DEF="Moodle Site"
+SHORT_NAME_DEF="Moodle"
+IS_PROD_DEF="n"
 
 MDL_DIR=~/moodle
 MDL_DATA=/var/www/moodle_data
@@ -60,6 +77,26 @@ HR=-----------------------------------------------------------------------------
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
+        --root-url )
+            WEB_ROOT="$2"
+            shift
+            ;;
+        --site-name )
+            SITE_NAME="$2"
+            shift
+            ;;
+        --short-name)
+            SHORT_NAME="$2"
+            shift
+            ;;
+        --admin-user)
+            ADMIN_USER="$2"
+            shift
+            ;;
+        --admin-pass)
+            ADMIN_PASS="$2"
+            shift
+            ;;
         --db-user )
             DB_USER="$2"
             shift
@@ -82,19 +119,26 @@ done
 # Get important values from user
 if [ ! -f $MDL_DIR/config.php ]; then
     while true; do
-        get_input "Enter site url [default: $WEB_ROOT]: " WEB_ROOT
+        get_input "Enter site url [default: $WEB_ROOT_DEF]: " WEB_ROOT
         if echo $WEB_ROOT | grep -Pq '^((http|https)://)?(www\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/?)$'; then
             WEB_ROOT=$(normalize_url $WEB_ROOT)
             break
         else
+            WEB_ROOT=""
             echo "Error: '$WEB_ROOT' is not a valid root URL."
         fi
     done
-    get_input "Enter full site name [default: $SITE_NAME]: " SITE_NAME
-    get_input "Enter short site name (1-2 words) [default: $SHORT_NAME]: " SHORT_NAME
-    get_input "Enter admin name [default: $ADMIN_USER]: " ADMIN_USER
-    get_input "Enter admin password [default: $ADMIN_PASS]: " ADMIN_PASS
+
+    get_input "Enter full site name [default: $SITE_NAME_DEF]: " SITE_NAME
+    get_input "Enter short site name (1-2 words) [default: $SHORT_NAME_DEF]: " SHORT_NAME
+    get_input "Enter admin username [default: $ADMIN_USER_DEF]: " ADMIN_USER
+    get_input "Enter admin password [default: $ADMIN_PASS_DEF]: " ADMIN_PASS
+    get_input "Enter database username [default: $DB_USER_DEF]: " DB_USER
+    get_input "Enter database password [default: $DB_PASS_DEF]: " DB_PASS
+    get_input "Is this a production server? (must have a publically accessible domain) (y/n) [default: n]: " IS_PROD
 fi
+
+echo_pink "$HR\nInitiating moodle install...\n$HR"
 
 # Set locale info (prevents verbose locale warnings)
 if ! cat /etc/locale.gen | tail | grep -w en_CA; then
@@ -107,7 +151,7 @@ else
 fi
 
 # Install Dependencies
-echo -e "$HR\n Installing dependencies...\n$HR"
+echo_pink "$HR\n Installing dependencies...\n$HR"
 sudo apt update && sudo apt upgrade -y
 
 if [ ! -f "/etc/apt/sources.list.d/pgdg.list" ]; then
@@ -119,12 +163,12 @@ fi
 
 sudo apt install -y apache2 postgresql-17 git ufw fail2ban php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 
-echo -e "$HR\nDone installing dependencies."
+echo_green "$HR\nDone installing dependencies."
 continue_prompt
 
 # Clone Moodle repository
 if [ ! -d "$MDL_DIR" ]; then
-    echo -e "$HR\n Cloning Moodle repository...\n$HR"
+    echo_pink "$HR\n Cloning Moodle repository...\n$HR"
     git clone --depth 1 -b MOODLE_500_STABLE git://git.moodle.org/moodle.git $MDL_DIR
 else
     echo "Moodle directory exists. Skipping..."
@@ -132,7 +176,7 @@ fi
 
 # Create database
 if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw moodle; then
-    echo -e "$HR\n Creating Postgres database and Moodle data directory...\n$HR"
+    echo_pink "$HR\n Creating Postgres database and Moodle data directory...\n$HR"
     sudo -u postgres psql -U postgres -c "CREATE USER $DB_USER WITH PASSWORD '$DB_PASS'"
     sudo -u postgres psql -U postgres -c "CREATE DATABASE moodle WITH OWNER $DB_USER"
 else
@@ -141,7 +185,7 @@ fi
 
 # Regular database backups
 if ! sudo -u postgres crontab -l 2>/dev/null | grep -q ".*$DB_BACKUP_SCRIPT.*"; then
-    echo -e "$HR\n Setting up regular database backups...\n$HR"
+    echo_pink "$HR\n Setting up regular database backups...\n$HR"
     sudo mkdir -p $DB_BACKUP_DIR
     sudo chown postgres:postgres $DB_BACKUP_DIR
     sudo chmod 700 $DB_BACKUP_DIR
@@ -168,7 +212,7 @@ EOF
     sudo chmod +x $DB_BACKUP_SCRIPT
     sudo touch $DB_BACKUP_LOG && sudo chown postgres:postgres $DB_BACKUP_LOG && sudo chmod 640 $DB_BACKUP_LOG
     sudo -u postgres sh -c "echo '0 0 * * 0 $DB_BACKUP_SCRIPT > $DB_BACKUP_LOG 2>&1' | crontab -"
-    echo "Added line to postgres user crontab:"
+    echo -e "\nAdded line to postgres user crontab:"
     sudo -u postgres crontab -l
 else
     echo "Database backup tasks exists. Skipping..."
@@ -183,23 +227,23 @@ fi
 
 # Start Moodle install
 if [ ! -f $MDL_DIR/config.php ]; then
-    echo -e "$HR\n Running Moodle installer...\n$HR"
+    echo_pink "$HR\n Running Moodle installer...\n$HR"
     sudo chown -R www-data:www-data $MDL_DIR
-    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot="http://$WEB_ROOT" --dataroot=$MDL_DATA --dbtype=pgsql --dbuser="$DB_USER" --dbpass="$DB_PASS" --dbport=5432 --fullname="$SITE_NAME" --shortname="$SHORT_NAME" --adminuser="$ADMIN_USER" --adminpass="$ADMIN_PASS" --non-interactive
+    sudo -u www-data php -d max_input_vars=5000 $MDL_DIR/admin/cli/install.php --agree-license --lang=en --wwwroot="https://$WEB_ROOT" --dataroot=$MDL_DATA --dbtype=pgsql --dbuser="$DB_USER" --dbpass="$DB_PASS" --dbport=5432 --fullname="$SITE_NAME" --shortname="$SHORT_NAME" --adminuser="$ADMIN_USER" --adminpass="$ADMIN_PASS" --non-interactive
     sudo chown -R root:www-data $MDL_DIR && sudo chmod -R 0755 $MDL_DIR $MDL_DATA
 else
     echo "Moodle configuration file exists. Skipping..."
 fi
 
-echo -e "$HR\nDone creating database and installing core components."
+echo_green "$HR\nDone creating database and installing core components."
 continue_prompt
 
 # Apache Modules
-echo -e "$HR\n Enabling Apache modules...\n$HR"
-sudo a2enmod rewrite headers expires rewrite
+echo_pink "$HR\n Enabling Apache modules...\n$HR"
+sudo a2enmod rewrite headers expires rewrite ssl
 
 # Apache PHP Config
-echo -e "$HR\n Copying Apache configuration files...\n$HR"
+echo_pink "$HR\n Copying Apache configuration files...\n$HR"
 sudo mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
 sudo mkdir /etc/php/8.2/apache2/conf.d
 echo "Creating php configuration file at /etc/php/8.2/apache2/conf.d/moodle.ini:"
@@ -264,21 +308,28 @@ EOF
 
 # SSL Certificate
 SSL_CERT_DIR=/etc/ssl/local_certs
-read -p "Is this a production server? (must have publically accessible domain) (y/n) [default: n] " IS_PROD
-IS_PROD={IS_PROD:-n}
 
-case "$yn" in
+case "$IS_PROD" in
     [Yy] )
-    curl -sSL -o mkcert "https://dl.filippo.io/mkcert/latest?for=linux/amd64"
-    sudo chmod +x mkcert && sudo mv mkcert /usr/local/bin/mkcert
-    mkcert $WEB_ROOT
+        echo_pink "$HR\nCreating production SSL certificate\n$HR"
+        sudo apt install certbot python3-certbot-apache
+        sudo certbot --apache
+    ;;
+    [Nn] )
+        echo_pink "$HR\nCreating local development SSL certificate\n$HR"
+        curl -sSL -o mkcert "https://dl.filippo.io/mkcert/latest?for=linux/amd64"
+        sudo chmod +x mkcert && sudo mv mkcert /usr/local/bin/mkcert
+        mkcert $WEB_ROOT
 
-    sudo mkdir -p $SSL_CERT_DIR
-    sudo cp $WEB_ROOT.pem $SSL_CERT_DIR/moodle_dev.crt
-    sudo cp $WEB_ROOT-key.pem $SSL_CERT_DIR/moodle_dev.key
-    sudo chmod 600 $SSL_CERT_DIR/moodle_dev.key
+        sudo mkdir -p $SSL_CERT_DIR
+        sudo cp $WEB_ROOT.pem $SSL_CERT_DIR/moodle_dev.crt
+        sudo cp $WEB_ROOT-key.pem $SSL_CERT_DIR/moodle_dev.key
+        sudo chmod 600 $SSL_CERT_DIR/moodle_dev.key
 
-    sudo tee -a "$APACHE_SITE_CONFIG" << EOF
+        sudo rm $WEB_ROOT.pem $WEB_ROOT-key.pem
+
+        echo "Appending to Apache virtual host configuration file at $APACHE_SITE_CONFIG:"
+        sudo tee -a "$APACHE_SITE_CONFIG" << EOF
 <VirtualHost *:443>
     ServerAdmin webmaster@localhost
     ServerName $WEB_ROOT
@@ -310,38 +361,35 @@ case "$yn" in
 </VirtualHost>
 EOF
 
-    cat << EOF
+        cat << EOF
 mkcert certificate is located at: $(mkcert -CAROOT)
 
 To use HTTPS locally, first install the mkcert cli on your machine.
 Find instructions at: https://github.com/FiloSottile/mkcert
 
 Then install the certificate locally:
-scp [local_username]@[your_vps_ip]:$(mkcert -CAROOT) ~/mkcert-CAROOT
+scp [your_vps_username]@[your_vps_ip]:$(mkcert -CAROOT)/rootCA.pem ~/mkcert-CAROOT
 CAROOT=~/mkcert-CAROOT mkcert -install
 
 # Add local domain to list of known hosts
 echo "[your_vps_ip] $WEB_ROOT" | /etc/hosts
 EOF
-    ;;
-    [Nn] )
-        # setup Certbot certificate here!
-    ;;
+        ;;
 esac
 
 # Enable Moodle site
-echo -e "$HR\n Enabling site...\n$HR"
+echo_pink "$HR\n Enabling site...\n$HR"
 sudo a2dissite 000-default.conf # disable Apache welcome page
 sudo a2ensite moodle.conf # enable moodle site
 sudo systemctl reload apache2
 sudo systemctl status apache2 --no-pager --lines=0
 
-echo -e "$HR\n Done with Apache configuration."
+echo_green "$HR\n Done with Apache configuration."
 continue_prompt
 
 # Set up cron service
 if ! sudo -u www-data crontab -l 2>/dev/null | grep -q ".*$MDL_DIR/admin/cli/cron.php.*"; then
-    echo -e "$HR\n Setting up Moodle cron service...\n$HR"
+    echo_pink "$HR\n Setting up Moodle cron service...\n$HR"
     sudo -u www-data sh -c "echo '* * * * * /usr/bin/php $MDL_DIR/admin/cli/cron.php >/dev/null' | crontab -"
     echo "Added line to www-data user crontab:"
     sudo -u www-data crontab -l
@@ -351,32 +399,22 @@ fi
 
 # Set up swapfile
 if [ ! -f "/swapfile" ]; then
-    echo -e "$HR\n Creating swapfile...\n$HR"
+    echo_pink "$HR\n Creating swapfile...\n$HR"
     sudo fallocate -l "$(free -b | awk '/Mem:/ {print $2}')" /swapfile
     sudo chmod 600 /swapfile
     sudo mkswap /swapfile
     sudo swapon /swapfile
     sudo sh -c "echo '/swapfile none swap sw 0 0' >> /etc/fstab"
-    sudo sh -c "echo 'vm.swappiness=20' >> /"
+    sudo sh -c "echo 'vm.swappiness=20' >> /etc/sysctl.conf"
     free -h
 else
     echo "Swapfile exists. Skipping..."
 fi
 
-# Setup UFW
-echo -e "$HR\n Setting up firewall...\n$HR"
-sudo ufw allow ssh
-sudo ufw allow http
-sudo ufw allow https
-echo "Allowed connection over ssh, http, and https."
-echo "Enabling firewall (may required confirmation)..."
-sudo ufw enable
-sudo ufw status verbose
-
 # Setup Fail2Ban
 JAIL_CONFIG="/etc/fail2ban/jail.local"
 if [ ! -f "$JAIL_CONFIG" ]; then
-    echo -e "$HR\n Setting up fail2ban (Brute-force protection)...\n$HR"
+    echo_pink "$HR\n Setting up fail2ban (Brute-force protection)...\n$HR"
     echo "Creating fail2ban configuration file at $JAIL_CONFIG:"
     sudo tee "$JAIL_CONFIG" << EOF
 [DEFAULT]
@@ -402,3 +440,13 @@ EOF
 else
     echo "Fail2ban configuration exists. Skipping..."
 fi
+
+# Setup UFW
+echo_pink "$HR\n Setting up firewall...\n$HR"
+sudo ufw allow ssh
+sudo ufw allow http
+sudo ufw allow https
+echo "Allowed connection over ssh, http, and https."
+echo "Enabling firewall (may required confirmation)..."
+echo "y" | sudo ufw enable
+sudo ufw status verbose
