@@ -145,6 +145,7 @@ if ! sudo -u postgres crontab -l 2>/dev/null | grep -q ".*$DB_BACKUP_SCRIPT.*"; 
     sudo mkdir -p $DB_BACKUP_DIR
     sudo chown postgres:postgres $DB_BACKUP_DIR
     sudo chmod 700 $DB_BACKUP_DIR
+    echo "Creating script at $DB_BACKUP_SCRIPT:"
     sudo tee "$DB_BACKUP_SCRIPT" << EOF
 #!/bin/bash
 
@@ -167,6 +168,7 @@ EOF
     sudo chmod +x $DB_BACKUP_SCRIPT
     sudo touch $DB_BACKUP_LOG && sudo chown postgres:postgres $DB_BACKUP_LOG && sudo chmod 640 $DB_BACKUP_LOG
     sudo -u postgres sh -c "echo '0 0 * * 0 $DB_BACKUP_SCRIPT > $DB_BACKUP_LOG 2>&1' | crontab -"
+    echo "Added line to postgres user crontab:"
     sudo -u postgres crontab -l
 else
     echo "Database backup tasks exists. Skipping..."
@@ -200,6 +202,7 @@ sudo a2enmod rewrite headers expires rewrite
 echo -e "$HR\n Copying Apache configuration files...\n$HR"
 sudo mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
 sudo mkdir /etc/php/8.2/apache2/conf.d
+echo "Creating php configuration file at /etc/php/8.2/apache2/conf.d/moodle.ini:"
 sudo tee "/etc/php/8.2/apache2/conf.d/moodle.ini" << EOF
 ; Moodle-specific PHP settings
 memory_limit = 512M
@@ -229,7 +232,9 @@ opcache.validate_timestamps = 0
 EOF
 
 # Apache Virtual Host Config
-sudo tee "/etc/apache2/sites-available/moodle.conf" << EOF
+APACHE_SITE_CONFIG=/etc/apache2/sites-available/moodle.conf
+echo "Creating Apache virtual host configuration file at $APACHE_SITE_CONFIG:"
+sudo tee "$APACHE_SITE_CONFIG" << EOF
 <VirtualHost *:80>
     ServerAdmin webmaster@localhost
     ServerName $WEB_ROOT
@@ -249,11 +254,80 @@ sudo tee "/etc/apache2/sites-available/moodle.conf" << EOF
 
     ErrorLog \${APACHE_LOG_DIR}/moodle_error.log
     CustomLog \${APACHE_LOG_DIR}/moodle_access.log combined
+
+    Redirect permanent / https://$WEB_ROOT
 </VirtualHost>
 
 # Suppress Apache's AH00558 warning
 ServerName localhost
 EOF
+
+# SSL Certificate
+SSL_CERT_DIR=/etc/ssl/local_certs
+read -p "Is this a production server? (must have publically accessible domain) (y/n) [default: n] " IS_PROD
+IS_PROD={IS_PROD:-n}
+
+case "$yn" in
+    [Yy] )
+    curl -sSL -o mkcert "https://dl.filippo.io/mkcert/latest?for=linux/amd64"
+    sudo chmod +x mkcert && sudo mv mkcert /usr/local/bin/mkcert
+    mkcert $WEB_ROOT
+
+    sudo mkdir -p $SSL_CERT_DIR
+    sudo cp $WEB_ROOT.pem $SSL_CERT_DIR/moodle_dev.crt
+    sudo cp $WEB_ROOT-key.pem $SSL_CERT_DIR/moodle_dev.key
+    sudo chmod 600 $SSL_CERT_DIR/moodle_dev.key
+
+    sudo tee -a "$APACHE_SITE_CONFIG" << EOF
+<VirtualHost *:443>
+    ServerAdmin webmaster@localhost
+    ServerName $WEB_ROOT
+    ServerAlias $WEB_ROOT
+
+    DocumentRoot $MDL_DIR
+
+    <Directory $MDL_DIR>
+        Options FollowSymLinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    <Directory $MDL_DATA>
+        Require all denied
+    </Directory>
+
+    ErrorLog \${APACHE_LOG_DIR}/moodle_error.log
+    CustomLog \${APACHE_LOG_DIR}/moodle_access.log combined
+
+    SSLEngine on
+    SSLCertificateFile $SSL_CERT_DIR/moodle_dev.crt
+    SSLCertificateKeyFile $SSL_CERT_DIR/moodle_dev.key
+
+    SSLProtocol all -SSLv2 -SSLv3
+    SSLCipherSuite HIGH:!aNULL:!MD5:!RC4
+    SSLHonorCipherOrder on
+    SSLCompression off
+</VirtualHost>
+EOF
+
+    cat << EOF
+mkcert certificate is located at: $(mkcert -CAROOT)
+
+To use HTTPS locally, first install the mkcert cli on your machine.
+Find instructions at: https://github.com/FiloSottile/mkcert
+
+Then install the certificate locally:
+scp [local_username]@[your_vps_ip]:$(mkcert -CAROOT) ~/mkcert-CAROOT
+CAROOT=~/mkcert-CAROOT mkcert -install
+
+# Add local domain to list of known hosts
+echo "[your_vps_ip] $WEB_ROOT" | /etc/hosts
+EOF
+    ;;
+    [Nn] )
+        # setup Certbot certificate here!
+    ;;
+esac
 
 # Enable Moodle site
 echo -e "$HR\n Enabling site...\n$HR"
@@ -269,6 +343,7 @@ continue_prompt
 if ! sudo -u www-data crontab -l 2>/dev/null | grep -q ".*$MDL_DIR/admin/cli/cron.php.*"; then
     echo -e "$HR\n Setting up Moodle cron service...\n$HR"
     sudo -u www-data sh -c "echo '* * * * * /usr/bin/php $MDL_DIR/admin/cli/cron.php >/dev/null' | crontab -"
+    echo "Added line to www-data user crontab:"
     sudo -u www-data crontab -l
 else
     echo "Moodle cron service exists. Skipping..."
@@ -293,6 +368,8 @@ echo -e "$HR\n Setting up firewall...\n$HR"
 sudo ufw allow ssh
 sudo ufw allow http
 sudo ufw allow https
+echo "Allowed connection over ssh, http, and https."
+echo "Enabling firewall (may required confirmation)..."
 sudo ufw enable
 sudo ufw status verbose
 
@@ -300,6 +377,7 @@ sudo ufw status verbose
 JAIL_CONFIG="/etc/fail2ban/jail.local"
 if [ ! -f "$JAIL_CONFIG" ]; then
     echo -e "$HR\n Setting up fail2ban (Brute-force protection)...\n$HR"
+    echo "Creating fail2ban configuration file at $JAIL_CONFIG:"
     sudo tee "$JAIL_CONFIG" << EOF
 [DEFAULT]
 ignoreip = 127.0.0.1/8 ::1 192.168.16.0/24 192.168.1.0/24 $(curl ifconfig.me)
