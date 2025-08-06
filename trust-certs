@@ -1,0 +1,5 @@
+#!/bin/bash
+
+mkdir ~/mkcert-CAROOT
+scp -i .vagrant/machines/default/virtualbox/private_key vagrant@moodle.local:/home/vagrant/.local/share/mkcert/rootCA.pem ~/mkcert-CAROOT/rootCA.pem
+CAROOT=~/mkcert-CAROOT mkcert -install

@@ -1,0 +1,8 @@
+#!/bin/bash
+
+vagrant destroy -gf
+ssh-keygen -R moodle.local
+ssh-keygen -R 192.168.33.10
+vagrant up
+scp -i .vagrant/machines/default/virtualbox/private_key ~/Source/Misc/moodle-config/moodle-install vagrant@moodle.local:~
+vagrant ssh
