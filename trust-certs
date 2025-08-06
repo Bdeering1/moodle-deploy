@@ -1,5 +1,12 @@
 #!/bin/bash
 
+# Provide a site url value or use the default (moodle.local)
+if [ -z "$1" ]; then
+    WEB_ROOT=moodle.local
+else
+    WEB_ROOT=$1
+fi
+
 mkdir ~/mkcert-CAROOT
-scp -i .vagrant/machines/default/virtualbox/private_key vagrant@moodle.local:/home/vagrant/.local/share/mkcert/rootCA.pem ~/mkcert-CAROOT/rootCA.pem
+scp -i .vagrant/machines/default/virtualbox/private_key vagrant@$WEB_ROOT:/home/vagrant/.local/share/mkcert/rootCA.pem ~/mkcert-CAROOT/rootCA.pem
 CAROOT=~/mkcert-CAROOT mkcert -install

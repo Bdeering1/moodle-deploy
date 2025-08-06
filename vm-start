@@ -1,8 +1,15 @@
 #!/bin/bash
 
+# Provide a site url value or use the default (moodle.local)
+if [ -z "$1" ]; then
+    WEB_ROOT=moodle.local
+else
+    WEB_ROOT=$1
+fi
+
 vagrant destroy -gf
-ssh-keygen -R moodle.local
+ssh-keygen -R $WEB_ROOT
 ssh-keygen -R 192.168.33.10
 vagrant up
-scp -i .vagrant/machines/default/virtualbox/private_key ~/Source/Misc/moodle-config/moodle-install vagrant@moodle.local:~
+scp -i .vagrant/machines/default/virtualbox/private_key ~/Source/Misc/moodle-config/moodle-install vagrant@$WEB_ROOT:~
 vagrant ssh
