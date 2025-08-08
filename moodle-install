@@ -4,6 +4,11 @@
 usage() {
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
+    echo "  --root-url           Set the root url for your site"
+    echo "  --site-name          Set the full name of your site"
+    echo "  --short-name         Set a short-form name for your site"
+    echo "  --admin-user         Set the admin username for your site"
+    echo "  --admin-pass         Set the admin password for your site"
     echo "  --db-user            Set postgreSQL database user"
     echo "  --db-pass            Set postgreSQL database password"
     echo "  -h, --help           Display this help message"
@@ -51,11 +56,11 @@ normalize_url() {
 echo_clr() {
     echo -e "\e[38;5;$2m$1\e[0m"
 }
-echo_pink() { echo_clr $1 204; }
-echo_blue() { echo_clr $1 69; }
-echo_purple() { echo_clr $1 135; }
-echo_orange() { echo_clr $1 209; }
-echo_green() { echo_clr $1 48; }
+echo_pink() { echo_clr "$1" 204; }
+echo_blue() { echo_clr "$1" 69; }
+echo_purple() { echo_clr "$1" 135; }
+echo_orange() { echo_clr "$1" 209; }
+echo_green() { echo_clr "$1" 48; }
 
 # Set environment variables
 DB_USER_DEF=moodleuser

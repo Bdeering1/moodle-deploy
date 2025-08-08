@@ -11,5 +11,5 @@ vagrant destroy -gf
 ssh-keygen -R $WEB_ROOT
 ssh-keygen -R 192.168.33.10
 vagrant up
-scp -i .vagrant/machines/default/virtualbox/private_key ~/Source/Misc/moodle-config/moodle-install vagrant@$WEB_ROOT:~
+scp -i .vagrant/machines/default/virtualbox/private_key moodle-install vagrant@$WEB_ROOT:~
 vagrant ssh
