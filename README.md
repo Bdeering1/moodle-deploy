@@ -7,7 +7,7 @@ Also includes virtual machine configuration (Vagrant) for local development.
 **Key Features**
 - Spins up Moodle on Apache with a PostgreSQL database.
 - Configure everything interactively.
-- Includes HTTPS (incl. SSL certificate creation), firewall and brute-force attack protection.
+- Includes HTTPS (incl. SSL certificate creation), firewall and IPS/IDS.
 - Regular database backups, swapfiles.
 
 **Server Stack**
@@ -20,6 +20,8 @@ Also includes virtual machine configuration (Vagrant) for local development.
 - Cron
 
 ## Usage
+
+For production sites: *first obtain a domain name and add a DNS record linking it to the IP address of your server (required for HTTPS).*
 
 Copy `moodle-install` onto your server or VPS and run it:
 ```sh
@@ -40,4 +42,5 @@ Once the install has completed, open a new terminal window and run:
 ./trust-certs
 ```
 This will add the SSL certificate created by the install script to your computer's trust store, allowing HTTPS to work.
+
 
