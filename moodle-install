@@ -248,10 +248,12 @@ echo_pink "$HR\n Enabling Apache modules...\n$HR"
 sudo a2enmod rewrite headers expires rewrite ssl
 
 # Apache PHP Config
-echo_pink "$HR\n Copying Apache configuration files...\n$HR"
+APACHE_PHP_CONFIG=/etc/php/8.2/apache2/conf.d/moodle.ini
+echo_pink "$HR\n Creating Apache configuration files...\n$HR"
 sudo mkdir /var/log/php && sudo chown -R www-data:www-data /var/log/php
 sudo mkdir /etc/php/8.2/apache2/conf.d
-echo "Creating php configuration file at /etc/php/8.2/apache2/conf.d/moodle.ini:"
+if [ ! -f $APACHE_PHP_CONFIG ]; then
+echo "Creating php configuration file at $APACHE_PHP_CONFIG:"
 sudo tee "/etc/php/8.2/apache2/conf.d/moodle.ini" << EOF
 ; Moodle-specific PHP settings
 memory_limit = 512M
@@ -279,12 +281,16 @@ opcache.memory_consumption = 256
 opcache.max_accelerated_files = 4000
 opcache.validate_timestamps = 0
 EOF
+else
+    echo "Apache php configuration exists. Skipping..."
+fi
 
 # Apache Virtual Host Config
 APACHE_SITE_CONFIG=/etc/apache2/sites-available/moodle.conf
-echo "Creating Apache virtual host configuration file at $APACHE_SITE_CONFIG:"
-sudo tee "$APACHE_SITE_CONFIG" << EOF
-<VirtualHost *:80>
+if [ ! -f $APACHE_SITE_CONFIG ]; then
+    echo "Creating Apache virtual host configuration file at $APACHE_SITE_CONFIG:"
+    sudo tee "$APACHE_SITE_CONFIG" << EOF
+<VirtualHost *:80 [::]:80>
     ServerAdmin webmaster@localhost
     ServerName $WEB_ROOT
     ServerAlias www.$WEB_ROOT
@@ -310,6 +316,9 @@ sudo tee "$APACHE_SITE_CONFIG" << EOF
 # Suppress Apache's AH00558 warning
 ServerName localhost
 EOF
+else
+    echo "Apache virtual host configuration exists. Skipping..."
+fi
 
 # SSL Certificate
 SSL_CERT_DIR=/etc/ssl/local_certs
@@ -335,7 +344,7 @@ case "$IS_PROD" in
 
         echo "Appending to Apache virtual host configuration file at $APACHE_SITE_CONFIG:"
         sudo tee -a "$APACHE_SITE_CONFIG" << EOF
-<VirtualHost *:443>
+<VirtualHost *:443 [::]:443>
     ServerAdmin webmaster@localhost
     ServerName $WEB_ROOT
     ServerAlias $WEB_ROOT
@@ -381,6 +390,27 @@ echo "[your_vps_ip] $WEB_ROOT" | /etc/hosts
 EOF
         ;;
 esac
+
+# IPv6 Config
+echo_pink "$HR\n Configuring IPv6...\n$HR"
+IPV6_LINE=$(ip -6 addr | grep "inet6" | grep -v "scope host" | grep -v "scope link" | grep "global")
+IPV6_ADDR=$(echo "$IPV6_LINE" | awk '{print $2}' | cut -d'/' -f1)
+IPV6_PREFIX=$(echo "$IPV6_LINE" | awk '{print $2}' | cut -d'/' -f2)
+IPV6_GATEWAY=$(ip -6 route | grep "default via" | awk '{print $3}')
+IFACE=$(echo "$IPV6_LINE" | awk '{print $NF}')
+
+echo "Creating IPv6 network configuration at /etc/network/interfaces.d/50-cloud-init-ipv6.cfg:"
+sudo tee "/etc/network/interfaces.d/50-cloud-init-ipv6.cfg" << EOF
+auto $IFACE
+iface $IFACE inet6 static
+mtu 1500
+address $IPV6_ADDR
+netmask $IPV6_PREFIX
+post-up /sbin/ip -6 route add $IPV6_GATEWAY dev $IFACE
+post-up /sbin/ip -6 route add default via $IPV6_GATEWAY dev $IFACE
+pre-down /sbin/ip -6 route del default via $IPV6_GATEWAY dev $IFACE
+pre-down /sbin/ip -6 route del $IPV6_GATEWAY dev $IFACE
+EOF
 
 # Enable Moodle site
 echo_pink "$HR\n Enabling site...\n$HR"
