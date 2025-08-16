@@ -23,8 +23,20 @@ Also includes virtual machine configuration (Vagrant) for local development.
 
 For production sites: *first obtain a domain name and add a DNS record linking it to the IP address of your server (required for HTTPS).*
 
-Copy `moodle-install` onto your server or VPS and run it:
+<details> 
+  <summary>Copy `moodle-install` onto your server.</summary>
+  
 ```sh
+# From your local machine
+git clone https://github.com/Bdeering1/moodle-deploy.git
+cd moodle-deploy
+scp moodle-install [your_user]@[your_server_ip]:~
+```
+</details>
+
+Then run:
+```sh
+# From your server
 ./moodle-install
 ```
 
@@ -43,5 +55,17 @@ Once the install has completed, open a new terminal window and run:
 ```
 This will add the SSL certificate created by the install script to your computer's trust store, allowing HTTPS to work.
 
+## Using the Interactive Installer
 
-
+The list of configurable options are the following:
+```
+  --root-url           Set the root url for your site
+  --site-name          Set the full name of your site
+  --short-name         Set a short-form name for your site
+  --admin-user         Set the admin username for your site
+  --admin-pass         Set the admin password for your site
+  --db-user            Set postgreSQL database user
+  --db-pass            Set postgreSQL database password
+  -h, --help           Display this help message
+```
+These options can be defined with command line flags and the user will be prompted to enter values for all unspecified options.
