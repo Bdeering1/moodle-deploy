@@ -36,7 +36,7 @@ get_input() {
 }
 
 continue_prompt() {
-    read -t 20 -p "Do you want to continue? (y/n) [default: y] " yn
+    read -t 30 -p "Do you want to continue? (y/n) [default: y] " yn
     yn=${yn:-y}
 
     case "$yn" in
@@ -72,6 +72,7 @@ SITE_NAME_DEF="Moodle Site"
 SHORT_NAME_DEF="Moodle"
 IS_PROD_DEF="n"
 
+SITE_ALIAS=""
 MDL_DIR=~/moodle
 MDL_DATA=/var/www/moodle_data
 DB_BACKUP_DIR=/var/backups/postgresql
@@ -84,6 +85,10 @@ while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --root-url )
             WEB_ROOT="$2"
+            shift
+            ;;
+        --site-alias)
+            SITE_ALIAS="$2"
             shift
             ;;
         --site-name )
@@ -129,8 +134,20 @@ if [ ! -f $MDL_DIR/config.php ]; then
             WEB_ROOT=$(normalize_url $WEB_ROOT)
             break
         else
-            WEB_ROOT=""
             echo "Error: '$WEB_ROOT' is not a valid root URL."
+            WEB_ROOT=""
+        fi
+    done
+    while true; do
+        get_input "Please enter an alias url (if any) [default: none]: " SITE_ALIAS
+        if [ -n $SITE_ALIAS ]; then
+            break
+        elif echo $SITE_ALIAS | grep -Pq '^((http|https)://)?(www\.)?([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(/?)$'; then
+            SITE_ALIAS=$(normalize_url $)
+            break
+        else
+            echo "Error: '$SITE_ALIAS' is not a valid root URL."
+            SITE_ALIAS=""
         fi
     done
 
@@ -166,7 +183,7 @@ if [ ! -f "/etc/apt/sources.list.d/pgdg.list" ]; then
     sudo apt update -y
 fi
 
-sudo apt install -y apache2 postgresql-17 git ufw fail2ban php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
+sudo apt install -y apache2 postgresql-17 cron git ufw fail2ban php8.2 php8.2-{curl,dom,gd,intl,mbstring,pgsql,xml,zip}
 
 echo_green "$HR\nDone installing dependencies."
 continue_prompt
@@ -293,7 +310,7 @@ if [ ! -f $APACHE_SITE_CONFIG ]; then
 <VirtualHost *:80 [::]:80>
     ServerAdmin webmaster@localhost
     ServerName $WEB_ROOT
-    ServerAlias www.$WEB_ROOT
+    ServerAlias $SITE_ALIAS
 
     DocumentRoot $MDL_DIR
 
@@ -319,6 +336,13 @@ EOF
 else
     echo "Apache virtual host configuration exists. Skipping..."
 fi
+
+# Temporary Apache Site (needed for production SSL certificate)
+echo_pink "$HR\n Enabling temporary site...\n$HR"
+sudo a2dissite 000-default.conf # disable Apache welcome page
+sudo a2ensite moodle.conf # enable moodle site
+sudo systemctl reload apache2
+sudo systemctl status apache2 --no-pager --lines=0
 
 # SSL Certificate
 SSL_CERT_DIR=/etc/ssl/local_certs
@@ -399,8 +423,8 @@ IPV6_PREFIX=$(echo "$IPV6_LINE" | awk '{print $2}' | cut -d'/' -f2)
 IPV6_GATEWAY=$(ip -6 route | grep "default via" | awk '{print $3}')
 IFACE=$(echo "$IPV6_LINE" | awk '{print $NF}')
 
-echo "Creating IPv6 network configuration at /etc/network/interfaces.d/50-cloud-init-ipv6.cfg:"
-sudo tee "/etc/network/interfaces.d/50-cloud-init-ipv6.cfg" << EOF
+echo "Creating IPv6 network configuration at /etc/network/interfaces.d/50-cloud-init-ipv6:"
+sudo tee "/etc/network/interfaces.d/50-cloud-init-ipv6" << EOF
 auto $IFACE
 iface $IFACE inet6 static
 mtu 1500
@@ -414,8 +438,6 @@ EOF
 
 # Enable Moodle site
 echo_pink "$HR\n Enabling site...\n$HR"
-sudo a2dissite 000-default.conf # disable Apache welcome page
-sudo a2ensite moodle.conf # enable moodle site
 sudo systemctl reload apache2
 sudo systemctl status apache2 --no-pager --lines=0
 
@@ -433,14 +455,21 @@ else
 fi
 
 # Set up swapfile
+MAX_SWAPSIZE=6000000000
 if [ ! -f "/swapfile" ]; then
     echo_pink "$HR\n Creating swapfile...\n$HR"
-    sudo fallocate -l "$(free -b | awk '/Mem:/ {print $2}')" /swapfile
+    total_mem=$(free -b | awk '/Mem:/ {print $2}')
+    if [ $total_mem -lt $MAX_SWAPSIZE ]; then
+        swapfile_size=$total_mem
+    else
+        swapfile_size=$MAX_SWAPSIZE
+    fi
+    sudo fallocate -l $swapfile_size /swapfile
     sudo chmod 600 /swapfile
     sudo mkswap /swapfile
     sudo swapon /swapfile
     sudo sh -c "echo '/swapfile none swap sw 0 0' >> /etc/fstab"
-    sudo sh -c "echo 'vm.swappiness=20' >> /etc/sysctl.conf"
+    sudo sh -c "echo 'vm.swappiness=15' >> /etc/sysctl.conf"
     free -h
 else
     echo "Swapfile exists. Skipping..."
@@ -454,9 +483,13 @@ if [ ! -f "$JAIL_CONFIG" ]; then
     sudo tee "$JAIL_CONFIG" << EOF
 [DEFAULT]
 ignoreip = 127.0.0.1/8 ::1 192.168.16.0/24 192.168.1.0/24 $(curl ifconfig.me)
+bantime = 15m
+findtime = 5m
+maxretry = 5
 
 [sshd]
 enabled = true
+backend = systemd
 
 [apache-auth]
 enabled = true
