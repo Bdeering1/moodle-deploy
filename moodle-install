@@ -238,6 +238,8 @@ EOF
     sudo -u postgres sh -c "echo '0 0 * * 0 $DB_BACKUP_SCRIPT > $DB_BACKUP_LOG 2>&1' | crontab -"
     echo -e "\nAdded line to postgres user crontab:"
     sudo -u postgres crontab -l
+    sudo sh -c "echo \"sudo -u postgres sh -c '$DB_BACKUP_SCRIPT 2>&1 | tee -a $DB_BACKUP_LOG'\" > /usr/local/bin/db_manual_backup"
+    sudo chmod +x /usr/local/bin/db_manual_backup
 else
     echo "Database backup tasks exists. Skipping..."
 fi
@@ -248,11 +250,12 @@ echo "Creating script at $DB_RESTORE_SCRIPT:"
 sudo tee "$DB_RESTORE_SCRIPT" << EOF
 #!/bin/bash
 set -o pipefail # ensure errors propagate through tee commands
+set -e # exit on non-zero status
 
 # Find latest backup file
 echo "Locating latest database backup..." | tee -a $DB_RESTORE_LOG
 LATEST_BACKUP="$DB_BACKUP_DIR/\$(sudo -u postgres ls -t $DB_BACKUP_DIR 2>/dev/null | head -n 1)"
-if [ -z \$LATEST_BACKUP]; then
+if [ -z \$LATEST_BACKUP ]; then
     echo "Error: No backup files found in $DB_BACKUP_DIR. Aborting..." | tee -a $DB_RESTORE_LOG
     exit 1
 fi
@@ -260,41 +263,29 @@ echo "Located database backup at: \$LATEST_BACKUP"
 
 # Terminate active db connections
 echo "Terminating active database connections..." | tee -a $DB_RESTORE_LOG
-if ! sudo -u postgres psql postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'moodle';" 2>&1 | tee -a $DB_RESTORE_LOG; then
-    echo "Error: Failed to terminate active connections. Aborting..." | tee -a $DB_RESTORE_LOG
-    exit 1
-fi
+sudo -u postgres psql postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'moodle';" 2>&1 | tee -a $DB_RESTORE_LOG
 echo "Active connections terminated." | tee -a $DB_RESTORE_LOG
 
-# Drop existing database
-echo "Dropping the existing database..." | tee -a $DB_RESTORE_LOG
-if ! sudo -u postgres psql postgres -c "DROP DATABASE moodle;" 2>&1 | tee -a $DB_RESTORE_LOG; then
-    echo "Error: Failed to drop existing database. Aborting..." | tee -a $DB_RESTORE_LOG
-    exit 1
-fi
-echo "Moodle database dropped successfully." | tee -a $DB_RESTORE_LOG
-
-# Create new empty database
-echo "Creating a new empty database..." | tee -a $DB_RESTORE_LOG
-if ! sudo -u postgres psql postgres -c "CREATE DATABASE moodle WITH OWNER \"$DB_USER\";" 2>&1 | tee -a "$DB_RESTORE_LOG"; then
-    echo "Error: Failed to create moodle database. Aborting..." | tee -a $DB_RESTORE_LOG
-    exit 1
-fi
-echo "Empty database created successfully." | tee -a $DB_RESTORE_LOG
+# Drop and re-create database
+echo "Dropping and re-creating the existing database..." | tee -a $DB_RESTORE_LOG
+sudo -u postgres psql postgres -c "DROP DATABASE moodle;" 2>&1 | tee -a $DB_RESTORE_LOG
+sudo -u postgres psql postgres -c "CREATE DATABASE moodle WITH OWNER \"$DB_USER\";" 2>&1 | tee -a $DB_RESTORE_LOG
+echo "Database ready for restore." | tee -a $DB_RESTORE_LOG
 
 # Restore backup
 echo "Restoring database from backup..." | tee -a $DB_RESTORE_LOG
-if ! sudo -u postgres pg_restore -v -U postgres -d moodle "\$LATEST_BACKUP" 2>&1 | tee -a $DB_RESTORE_LOG; then
-    echo "Error: Failed to restore database from backup. Aborting..." | tee -a $DB_RESTORE_LOG
-    exit 1
-fi
+sudo -u postgres pg_restore -U postgres -d moodle "\$LATEST_BACKUP" 2>&1 | tee -a $DB_RESTORE_LOG
 echo "Database restored successfully." | tee -a $DB_RESTORE_LOG
 
 # Run analyze command for postgresql optimizer
 echo "Running analyzer..." | tee -a $DB_RESTORE_LOG
 sudo -u postgres psql -U postgres -d "moodle" -c "ANALYZE;" 2>&1 | tee -a $DB_RESTORE_LOG
+echo "Analyzer finished." | tee -a $DB_RESTORE_LOG
+
+echo "Restore process complete at $(date)" | tee -a $DB_RESTORE_LOG
 EOF
 sudo chmod +x $DB_RESTORE_SCRIPT
+
 
 # Create moodledata directory
 if [ ! -d "$MDL_DATA" ]; then
