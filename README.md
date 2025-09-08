@@ -51,7 +51,7 @@ cd moodle-deploy
 ```
 Once the install has completed, open a new terminal window and run:
 ```sh
-./trust-certs
+./trust-certs # [site url here if it was changed from the default]
 ```
 This will add the SSL certificate created by the install script to your computer's trust store, allowing HTTPS to work.
 
@@ -69,3 +69,4 @@ The list of configurable options are the following:
   -h, --help           Display this help message
 ```
 These options can be defined with command line flags and the user will be prompted to enter values for all unspecified options.
+
