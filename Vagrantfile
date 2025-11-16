@@ -6,10 +6,9 @@ Vagrant.configure("2") do |config|
   config.ssh.forward_agent = true
   config.vm.network "private_network", ip: "192.168.33.10"
 
-  # VirtualBox settings
   config.vm.provider "virtualbox" do |vb|
-    vb.name = "Debian-Moodle-Practice"
-    vb.memory = "1024" # Allocate 1GB RAM
+    vb.name = "Debian-Moodle"
+    vb.memory = "1024"
     vb.cpus = 2
   end
 end
