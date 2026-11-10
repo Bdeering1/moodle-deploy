@@ -566,3 +566,16 @@ echo "Allowed connection over ssh, http, and https."
 echo "Enabling firewall (may required confirmation)..."
 echo "y" | sudo ufw enable
 sudo ufw status verbose
+
+# Setup needrestart (installed last so its apt hook doesn't interrupt the installer's own apt runs)
+NEEDRESTART_CONFIG="/etc/needrestart/conf.d/autorestart.conf"
+if [ ! -f "$NEEDRESTART_CONFIG" ]; then
+    echo_pink "$HR\n Setting up needrestart (automatic service restarts after upgrades)...\n$HR"
+    sudo apt install -y needrestart
+    echo "Creating needrestart configuration file at $NEEDRESTART_CONFIG:"
+    sudo tee "$NEEDRESTART_CONFIG" << 'EOF'
+$nrconf{restart} = 'a';
+EOF
+else
+    echo "Needrestart configuration exists. Skipping..."
+fi

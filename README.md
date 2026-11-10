@@ -18,6 +18,7 @@ Also includes virtual machine configuration (Vagrant) for local development.
 - Fail2Ban
 - UFW
 - Cron
+- needrestart
 
 ## Usage
 
